@@ -137,7 +137,7 @@ The endpoint method *getFeaturedSpeaker* retrieves the speaker data which was st
 
 
 ### **Setup Instructions**
-In order to deploy this API server locally, first download the Google App Engine SDK for Python and then install it. 
+In order to deploy this API server locally, first download the [Google App Engine SDK for Python](https://cloud.google.com/appengine/downloads) and then install it. 
 
 1.	Clone this repository or download it as a zip file.
 
@@ -145,6 +145,6 @@ In order to deploy this API server locally, first download the Google App Engine
   *	Open the File menu and then click on Add Existing Application.
   * Browse to the parent directory that contains all the application files which you just downloaded. 
   * Click on the Run button to run the application locally and then navigate to your local server’s address (by default localhost:8080.)
-  * To deploy the application on the Google Cloud Platform, click on the Deploy button in the Google App Engine Launcher, and navigate to Conference Central Application.
+  * To deploy the application on the Google Cloud Platform, click on the Deploy button in the Google App Engine Launcher, and navigate to [Conference Central Application](https://flash-bloom-101317.appspot.com/#/).
   
-3.	To test the functionality of the different API endpoint methods in the application, go to Google API explorer.
+3.	To test the functionality of the different API endpoint methods in the application, go to [Google API explorer](https://apis-explorer.appspot.com/apis-explorer/?base=https://flash-bloom-101317.appspot.com/_ah/api).
