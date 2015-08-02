@@ -10,9 +10,6 @@ created by wesc on 2014 apr 21
 __author__ = 'wesc+api@google.com (Wesley Chun)'
 
 
-
-
-
 import os
 import time
 import logging
@@ -84,7 +81,6 @@ FIELDS =    {
             'MAX_ATTENDEES': 'maxAttendees',
             }
 
-
 SESSION_GET_REQUEST = endpoints.ResourceContainer(
     message_types.VoidMessage,
     websafeConferenceKey=messages.StringField(1, required=True),
@@ -110,6 +106,7 @@ WISHLIST_POST_REQUEST = endpoints.ResourceContainer(
     message_types.VoidMessage,
     websafeSessionKey=messages.StringField(1, required=True),
 )
+
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 
@@ -145,7 +142,7 @@ class ConferenceApi(remote.Service):
         user = endpoints.get_current_user()
         if not user:
             raise endpoints.UnauthorizedException('Authorization required')
-        user_id = getUserId(user)
+        user_id = _getUserId()
 
         if not request.name:
             raise endpoints.BadRequestException("Conference 'name' field required")
@@ -196,7 +193,7 @@ class ConferenceApi(remote.Service):
         user = endpoints.get_current_user()
         if not user:
             raise endpoints.UnauthorizedException('Authorization required')
-        user_id = getUserId(user)
+        user_id = _getUserId()
 
         # copy ConferenceForm/ProtoRPC Message into dict
         data = {field.name: getattr(request, field.name) for field in request.all_fields()}
@@ -270,11 +267,10 @@ class ConferenceApi(remote.Service):
         user = endpoints.get_current_user()
         if not user:
             raise endpoints.UnauthorizedException('Authorization required')
-        user_id = getUserId(user)
 
         # create ancestor query for all key matches for this user
-        confs = Conference.query(ancestor=ndb.Key(Profile, user_id))
-        prof = ndb.Key(Profile, user_id).get()
+        confs = Conference.query(ancestor=ndb.Key(Profile, _getUserId()))
+        prof = ndb.Key(Profile, _getUserId()).get()
         # return set of ConferenceForm objects per Conference
         return ConferenceForms(
             items=[self._copyConferenceToForm(conf, getattr(prof, 'displayName')) for conf in confs]
@@ -353,7 +349,7 @@ class ConferenceApi(remote.Service):
                 conferences]
         )
 
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 1 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 1 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     @endpoints.method(CONF_GET_REQUEST, SessionForms,
             path='conference/{websafeConferenceKey}/sessions',
             http_method='GET', name='getConferenceSessions')
@@ -406,12 +402,7 @@ class ConferenceApi(remote.Service):
             items=[self._copySessionToForm(session) for session in sessions]
         )
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 1 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-
-
-
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 3 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
     @endpoints.method(message_types.VoidMessage, ConferenceForms,
             path='conferences/incomplete',
             http_method='GET', name='getConferencesWithMissingInfo')
@@ -427,13 +418,174 @@ class ConferenceApi(remote.Service):
             items = [self._copyConferenceToForm(conf, getattr(conf.key.parent().get(), 'displayName')) for conf in conferences]
 
         )
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 3 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+# - - - Session objects - - - - - - - - - - - - - - - - - - -
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 1 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
+    @endpoints.method(SessionForm, SessionForm,
+            path='sessions',
+            http_method='POST', name='createSession')
+    def createSession(self, request):
+        """Open to the organizer of the conference"""
+        return self._createSessionObject(request)
+
+
+    def _createSessionObject(self, request):
+        """Create or update Session object, returning SessionForm/request."""
+        # preload necessary data items
+        user = endpoints.get_current_user()
+        if not user:
+            raise endpoints.UnauthorizedException('Authorization required')
+        user_id = _getUserId()
+
+        if not request.name:
+            raise endpoints.BadRequestException("Session 'name' field required")
+
+        # get and check conference
+        conf = ndb.Key(urlsafe=request.websafeConferenceKey).get()
+        # check that this conference exists
+        if not conf:
+            raise endpoints.NotFoundException(
+                'No conference found with key: %s' % request.websafeConferenceKey)
+
+        # check that user is the owner
+        if user_id != confer.organizerUserId:
+            raise endpoints.ForbiddenException(
+                'Only the owner can add sessions.')
+
+        # copy SessionForm into dict
+        data = {field.name: getattr(request, field.name) for field in request.all_fields()}
+
+        # convert dates from strings to Date objects
+        if data['date']:
+            data['date'] = datetime.strptime(data['date'][:10], "%Y-%m-%d").date()
+
+        # convert time from strings to Time object 
+        if data['startTime']:
+            data['startTime'] = datetime.strptime(data['startTime'][:5], "%H:%M").time()
+
+        # generate key based off of parent-child relationship
+        p_key = ndb.Key(Conference, conf.key.id())
+        c_id = Session.allocate_ids(size=1, parent=p_key)[0]
+        c_key = ndb.Key(Session, c_id, parent=p_key)
+        data['key'] = c_key
+        data['organizerUserId'] = user_id
+        del data['websafeConferenceKey']
+        del data['websafeKey']
+
+        Session(**data).put()       
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 4 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+         # check if the speaker is also present in other sessions, if yes then add it to memcahe
+        sessions = Session.query(Session.speaker == data['speaker'],ancestor=p_key)
+        if len(list(sessions)) > 1:
+            cache_data = {}
+            cache_data['speaker'] = data['speaker']
+            cache_data['sessionNames'] = [session.name for session in sessions]
+            if not memcache.set('featured_speaker', cache_data):
+                logging.error('The memcache set has failed to produce the required data.')
+
+                return request
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 4 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    def _copySessionToForm(self, session):
+        """Copy relevant fields from Session to SessionForm."""
+        sf = SessionForm()
+        for field in sf.all_fields():
+            if hasattr(session, field.name):
+                # convert Date and Time to date string; just copy others
+                if field.name in ['startTime', 'date']:
+                    setattr(sf, field.name, str(getattr(session, field.name)))
+                else:
+                    setattr(sf, field.name, getattr(session, field.name))
+            elif field.name == "websafeKey":
+                setattr(sf, field.name, session.key.urlsafe())
+        sf.check_initialized()
+        return sf
+
+    @endpoints.method(SPEAKER_GET_REQUEST, SessionForms,
+            path='sessions/{speaker}',
+            http_method='GET', name='getSessionsBySpeaker')
+    def getSessionsBySpeaker(self, request):
+        """Given a speaker, return all sessions given by him/her across all conferences"""
+        
+        data = {field.name: getattr(request, field.name) for field in request.all_fields()}
+        speaker = data['speaker']
+
+        # create query to find sessions delivered by the given speaker
+        sessions = Session.query(Session.speaker == speaker)
+
+        # return the set of SessionForm objects per Session
+        return SessionForms(
+            items=[self._copySessionToForm(session) for session in sessions]
+        )
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 1 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 3 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    @endpoints.method(message_types.VoidMessage, SessionForms,
+            http_method='GET', name='getSessionsWithMissingInfo')
+    def getSessionsWithMissingInfo(self, request):
+        """Returns list of all sessions that have missing information"""
 
+        sessions = Session.query(ndb.OR(
+            Session.highlights == None,
+            Session.duration == None,
+            Session.startTime == None,
+            Session.date == None
+            ))
+        return SessionForms(
+            items=[self._copySessionToForm(session) for session in sessions]
+        )
 
+    @endpoints.method(message_types.VoidMessage, SessionForms,
+            http_method='GET', name='getBefore7pmNonWorkshopSessions')
+    def getBefore7pmNonWorkshopSessions(self, request):
+        """Returns non-workshop sessions that take place before 7pm"""
 
-    
+        sessions = Session.query(ndb.AND(
+                Session.startTime != None,
+                Session.startTime <= timed(hour=19)
+                ))
+
+        nonworkshop_sessions = []
+        for session in sessions:
+            if 'workshop' in session.typeOfSession:
+                continue
+            else:
+                nonworkshop_sessions.append(session)
+
+        return SessionForms(
+            items=[self._copySessionToForm(session) for session in nonworkshop_sessions]
+        )
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 3 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 4 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -    
+    @endpoints.method(message_types.VoidMessage, SpeakerForm,
+            http_method='GET', name='getFeaturedSpeaker')
+    def getFeaturedSpeaker(self, request):
+        """Returns the sessions of the featured speaker"""
+        # try to get the speaker related data from memcache that was storied earlier
+        data = memcache.get('featured_speaker')
+        from pprint import pprint
+        pprint(data)
+        sessionNames = []
+        speaker = None
+
+        if data and data.has_key('speaker') and data.has_key('sessionNames'):
+            speaker = data['speaker']
+            sessionNames = data['sessionNames']
+            
+          # if the memcache fails or is found to be empty, then display a message accordingly
+        else: 
+             raise endpoints.NotFoundException(
+                'Failed to retrieve data related to the speaker.')    
+
+         # populate the speaker form appropriately in case the speaker data is sucessfully retrieved 
+        sf = SpeakerForm()
+        for field in sf.all_fields():
+            if field.name == 'sessionNames':
+                setattr(sf, field.name, sessionNames)
+            elif field.name == 'speaker':
+                setattr(sf, field.name, speaker)
+        sf.check_initialized()
+        return sf     
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 4 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # - - - Profile objects - - - - - - - - - - - - - - - - - - -
-
     def _copyProfileToForm(self, prof):
         """Copy relevant fields from Profile to ProfileForm."""
         # copy relevant fields from Profile to ProfileForm
@@ -507,8 +659,7 @@ class ConferenceApi(remote.Service):
     def saveProfile(self, request):
         """Update & return user profile."""
         return self._doProfile(request)
-
-    
+  
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 2 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     @endpoints.method(WISHLIST_POST_REQUEST, SessionForm,
             http_method='POST', name='addSessionToWishlist')
@@ -562,10 +713,8 @@ class ConferenceApi(remote.Service):
         )
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 2 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-
-
-
 # - - - Announcements - - - - - - - - - - - - - - - - - - - -
+
     @staticmethod
     def _cacheAnnouncement():
         """Create Announcement & assign to memcache; used by
@@ -579,7 +728,9 @@ class ConferenceApi(remote.Service):
         if confs:
             # If there are almost sold out conferences,
             # format announcement and set it in memcache
-            announcement = ANNOUNCEMENT_TPL % (
+            announcement = '%s %s' % (
+                'Last chance to attend! The following conferences '
+                'are nearly sold out:',
                 ', '.join(conf.name for conf in confs))
             memcache.set(MEMCACHE_ANNOUNCEMENTS_KEY, announcement)
         else:
@@ -599,8 +750,16 @@ class ConferenceApi(remote.Service):
         return StringMessage(data=memcache.get(MEMCACHE_ANNOUNCEMENTS_KEY) or "")
 
 
+    @endpoints.method(message_types.VoidMessage, StringMessage,
+            path='conference/announcement/put',
+            http_method='GET', name='putAnnouncement')
+    def putAnnouncement(self, request):
+        """Put Announcement into memcache"""
+        return StringMessage(data=self._cacheAnnouncement())
+
 
 # - - - Registration - - - - - - - - - - - - - - - - - - - -
+
     @ndb.transactional(xg=True)
     def _conferenceRegistration(self, request, reg=True):
         """Register or unregister user for selected conference."""
@@ -688,194 +847,6 @@ class ConferenceApi(remote.Service):
     def unregisterFromConference(self, request):
         """Unregister user for selected conference."""
         return self._conferenceRegistration(request, reg=False)
-    
 
 
-
-# - - - Session objects - - - - - - - - - - - - - - - - - - -
-
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 1 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
-    @endpoints.method(SessionForm, SessionForm,
-            path='sessions',
-            http_method='POST', name='createSession')
-    def createSession(self, request):
-        """Open to the organizer of the conference"""
-        return self._createSessionObject(request)
-
-
-    def _createSessionObject(self, request):
-        """Create or update Session object, returning SessionForm/request."""
-        # preload necessary data items
-        user = endpoints.get_current_user()
-        if not user:
-            raise endpoints.UnauthorizedException('Authorization required')
-        user_id = _getUserId()
-
-        if not request.name:
-            raise endpoints.BadRequestException("Session 'name' field required")
-
-        # get and check conference
-        conf = ndb.Key(urlsafe=request.websafeConferenceKey).get()
-        # check that this conference exists
-        if not conf:
-            raise endpoints.NotFoundException(
-                'No conference found with key: %s' % request.websafeConferenceKey)
-
-        # check that user is the owner
-        if user_id != confer.organizerUserId:
-            raise endpoints.ForbiddenException(
-                'Only the owner can add sessions.')
-
-        # copy SessionForm into dict
-        data = {field.name: getattr(request, field.name) for field in request.all_fields()}
-
-        # convert dates from strings to Date objects
-        if data['date']:
-            data['date'] = datetime.strptime(data['date'][:10], "%Y-%m-%d").date()
-
-        # convert time from strings to Time object 
-        if data['startTime']:
-            data['startTime'] = datetime.strptime(data['startTime'][:5], "%H:%M").time()
-
-        # generate key based off of parent-child relationship
-        p_key = ndb.Key(Conference, conf.key.id())
-        c_id = Session.allocate_ids(size=1, parent=p_key)[0]
-        c_key = ndb.Key(Session, c_id, parent=p_key)
-        data['key'] = c_key
-        data['organizerUserId'] = user_id
-        del data['websafeConferenceKey']
-        del data['websafeKey']
-
-        Session(**data).put()
-
-        
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 4 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-         # check if the speaker is also present in other sessions, if yes then add it to memcahe
-        sessions = Session.query(Session.speaker == data['speaker'],ancestor=p_key)
-        if len(list(sessions)) > 1:
-            cache_data = {}
-            cache_data['speaker'] = data['speaker']
-            cache_data['sessionNames'] = [session.name for session in sessions]
-            if not memcache.set('featured_speaker', cache_data):
-                logging.error('The memcache set has failed to produce the required data.')
-
-                return request
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 4 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-
-    def _copySessionToForm(self, session):
-        """Copy relevant fields from Session to SessionForm."""
-        sf = SessionForm()
-        for field in sf.all_fields():
-            if hasattr(session, field.name):
-                # convert Date and Time to date string; just copy others
-                if field.name in ['startTime', 'date']:
-                    setattr(sf, field.name, str(getattr(session, field.name)))
-                else:
-                    setattr(sf, field.name, getattr(session, field.name))
-            elif field.name == "websafeKey":
-                setattr(sf, field.name, session.key.urlsafe())
-        sf.check_initialized()
-        return sf
-
-    @endpoints.method(SPEAKER_GET_REQUEST, SessionForms,
-            path='sessions/{speaker}',
-            http_method='GET', name='getSessionsBySpeaker')
-    def getSessionsBySpeaker(self, request):
-        """Given a speaker, return all sessions given by him/her across all conferences"""
-        
-        data = {field.name: getattr(request, field.name) for field in request.all_fields()}
-        speaker = data['speaker']
-
-        # create query to find sessions delivered by the given speaker
-        sessions = Session.query(Session.speaker == speaker)
-
-        # return the set of SessionForm objects per Session
-        return SessionForms(
-            items=[self._copySessionToForm(session) for session in sessions]
-        )
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 1 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-
-
-
-    
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 3 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    @endpoints.method(message_types.VoidMessage, SessionForms,
-            http_method='GET', name='getSessionsWithMissingInfo')
-    def getSessionsWithMissingInfo(self, request):
-        """Returns list of all sessions that have missing information"""
-
-        sessions = Session.query(ndb.OR(
-            Session.highlights == None,
-            Session.duration == None,
-            Session.startTime == None,
-            Session.date == None
-            ))
-        return SessionForms(
-            items=[self._copySessionToForm(session) for session in sessions]
-        )
-
-    @endpoints.method(message_types.VoidMessage, SessionForms,
-            http_method='GET', name='getBefore7pmNonWorkshopSessions')
-    def getBefore7pmNonWorkshopSessions(self, request):
-        """Returns non-workshop sessions that take place before 7pm"""
-
-        sessions = Session.query(ndb.AND(
-                Session.startTime != None,
-                Session.startTime <= timed(hour=19)
-                ))
-
-        nonworkshop_sessions = []
-        for session in sessions:
-            if 'workshop' in session.typeOfSession:
-                continue
-            else:
-                nonworkshop_sessions.append(session)
-
-        return SessionForms(
-            items=[self._copySessionToForm(session) for session in nonworkshop_sessions]
-        )
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 3 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-    
-
-
-
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 4 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -    
-    @endpoints.method(message_types.VoidMessage, SpeakerForm,
-            http_method='GET', name='getFeaturedSpeaker')
-    def getFeaturedSpeaker(self, request):
-        """Returns the sessions of the featured speaker"""
-        # try to get the speaker related data from memcache that was storied earlier
-        data = memcache.get('featured_speaker')
-        from pprint import pprint
-        pprint(data)
-        sessionNames = []
-        speaker = None
-
-        if data and data.has_key('speaker') and data.has_key('sessionNames'):
-            speaker = data['speaker']
-            sessionNames = data['sessionNames']
-            
-          # if the memcache fails or is found to be empty, then display a message accordingly
-        else: 
-             raise endpoints.NotFoundException(
-                'Failed to retrieve data related to the speaker.')    
-
-         # populate the speaker form appropriately in case the speaker data is sucessfully retrieved 
-        sf = SpeakerForm()
-        for field in sf.all_fields():
-            if field.name == 'sessionNames':
-                setattr(sf, field.name, sessionNames)
-            elif field.name == 'speaker':
-                setattr(sf, field.name, speaker)
-        sf.check_initialized()
-        return sf
-
-      
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - TASK 4 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-            
-
-    api = endpoints.api_server([ConferenceApi]) # register API
+api = endpoints.api_server([ConferenceApi]) # register API
